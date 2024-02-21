@@ -1,0 +1,20 @@
+model_params:
+  learning_rate: 0.001
+  batch_size: -1
+  d_feat: 82 # input feature size
+  hidden_size: [128,64,32] # hidden size for each hidden layer
+  dropout: 0.2
+  max_epochs: 25
+  save_path: "results/"
+
+
+data_params:
+  train_length: 1260 # 5 year
+  valid_length: 252 # 1 year
+  test_length: 252 # 1 year
+  data_path: "data/debug.csv"
+  target: "1d_return"
+  seq_len: 20
+  shuffle: False
+  refit: 252 # every year refit model
+  using_buffer: False

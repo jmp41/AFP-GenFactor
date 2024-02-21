@@ -1,0 +1,26 @@
+model_params:
+  learning_rate: 0.001
+  batch_size: -1
+  num_epochs: 20
+  d_feat: 10 # input feature size
+  d_model: 8 # number of features in encoder-decoder inputs
+  nhead: 4
+  dropout: 0.5
+  num_layers: 2
+  max_epochs: 2
+  save_path: "results/"
+
+
+data_params:
+  train_length: 300 # 6 years
+  valid_length: 50 # 1 year
+  test_length: 50 # 1 year
+  feature: "data/tot_factor_debug.npy"
+  label: "data/forward_week_ret.npy"
+  stock_id: "data/gvkey.npy"
+  date_list: "data/date_wk.npy"
+  in_univ: "data/IN_univ.npy"
+  fac_name: "data/fac_name.npy"
+  seq_len: 20
+  shuffle: False
+  refit: 50 # every 50 weeks refit model
