@@ -112,7 +112,7 @@ class FactorDecoder(nn.Module):
     
     def reparameterize(self, mu, sigma):
         eps = torch.randn_like(sigma)
-        return self.norm_layer(mu + eps * sigma)
+        return mu + eps * sigma
     
     def forward(self, stock_latent, factor_mu, factor_sigma):
         alpha_mu, alpha_sigma = self.alpha_layer(stock_latent)
@@ -267,7 +267,7 @@ class GenFactor(ModelBase, pl.LightningModule):
         return output.squeeze()
     
     def training_step(self, batch, batch_idx):
-        _,_,x, y,_ = batch
+        _,_,x, y = batch
         loss = self.factorVAE(x,y[:,-1])
         self.log('train_loss', loss)
         return loss

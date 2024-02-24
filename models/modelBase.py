@@ -10,7 +10,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from scipy.stats import spearmanr
 from torch import nn, optim
 
-from scripts.utils import reset_model_weights
+from scripts.utils import reset_model_weights, seed_all
 
 
 class ModelBase(pl.LightningModule):
@@ -30,6 +30,8 @@ class ModelBase(pl.LightningModule):
         self.lr_rate = args['model_params']['learning_rate']
         self.seq_len = args['data_params']['seq_len']
         self.optimizer = None
+        self.seed = args['model_params']['seed']
+        seed_all(self.seed)
         
         self.train_period = ['2005-11-19', '2006-01-01']
         self.valid_period = ['2006-01-01', '2006-02-09']
@@ -50,6 +52,23 @@ class ModelBase(pl.LightningModule):
                 x = torch.nan_to_num(x, nan=0.0)
             pred = self.forward(x) 
             IC,_ = spearmanr(pred.detach().cpu().numpy(), y[:, -1].squeeze().cpu().numpy())
+            # df = pd.DataFrame({
+            #     'signal': pred.detach().cpu().numpy(),  
+            #     'return': y[:, -1].squeeze().cpu().numpy()  
+            # })
+
+            # Sort securities by signal
+            # df_sorted = df.sort_values(by='signal', ascending=False)
+
+            # # Assign quantiles
+            # df_sorted['quantile'] = pd.qcut(df_sorted['signal'], 10, labels=False) + 1
+
+            # # Calculate returns for long and short portfolios
+            # long_returns = df_sorted[df_sorted['quantile'] == 1]['return']  # Top 10%
+            # short_returns = df_sorted[df_sorted['quantile'] == 10]['return']  # Bottom 10%
+
+            # # Assuming equal weighting for simplicity
+            # portfolio_return = long_returns.mean() - short_returns.mean()
             return IC
 
     def training_step(self, batch, batch_idx):
@@ -71,7 +90,7 @@ class ModelBase(pl.LightningModule):
         ic = self.get_metrics(batch)
         self.log("val_loss", loss, prog_bar=True, on_epoch=True)
         self.log("val_ic", ic, on_epoch=True)
-
+    
     def test_step(self, batch, batch_idx):
         loss = self.get_mseloss(batch)
         self.log("test_loss", loss)
@@ -84,7 +103,7 @@ class ModelBase(pl.LightningModule):
             save_top_k=1,
             mode="min",
         )
-        early_stopping = EarlyStopping('val_ic',patience=3,mode='max')
+        early_stopping = EarlyStopping('val_ic',patience=self.args['model_params']['early_stopping'],mode='max')
         tb_logger = TensorBoardLogger(self.save_path+"/logs", name=self.name, version=str(self.test_period[0][:4]))
 
         trainer = pl.Trainer(
@@ -103,6 +122,7 @@ class ModelBase(pl.LightningModule):
     def predict(self):
         # predict test period and save to csv files
         self.eval()
+        self.cuda()
         self.dl.update_period(self.test_period)
         preds = []
         facts = []
@@ -114,8 +134,8 @@ class ModelBase(pl.LightningModule):
                 x = torch.nan_to_num(x, nan=0.0)
 
             pred = self.forward(x)
-            preds.append(pd.Series((pred).detach().cpu().numpy(), index=id))
-            facts.append(pd.Series((y[:, -1]).numpy(), index=id))
+            preds.append(pd.Series(pred.detach().cpu().numpy(), index=id))
+            facts.append(pd.Series((y[:, -1]).detach().cpu().numpy(), index=id))
         return preds, facts, dates
     
     def load_best_model(self):

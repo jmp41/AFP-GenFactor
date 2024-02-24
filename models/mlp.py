@@ -34,9 +34,10 @@ class MLP(ModelBase, pl.LightningModule):
             )
             in_channels = h_dim
         modules.append(nn.Linear(h_dim, 1))
+        self.gate = nn.Linear(self.d_feat, 1)
         self.decoder = nn.Sequential(*modules)
         self.output_norm = nn.BatchNorm1d(1)
-        self.l1_reg = None
+        self.l1_reg = 0.01
         self.dl = dl
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr_rate)
     
@@ -45,6 +46,6 @@ class MLP(ModelBase, pl.LightningModule):
         x = x.permute(1,0,2)
         x = self.encoder(x)
         x = self.decoder(x.squeeze())
-        x = self.output_norm(x)
         return x.squeeze() # (N, )
+    
     

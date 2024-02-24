@@ -2,15 +2,14 @@ model_params:
   learning_rate: 0.001
   batch_size: -1
   d_feat: 82 # input feature size
-  d_model: 16 # number of features in encoder-decoder inputs
-  nhead: 8
+  hidden_size: 64
   dropout: 0.2
+  num_factor: 16
   num_layers: 2
   max_epochs: 50
   save_path: "results/"
-  seed: 42
   early_stopping: 10
-
+  seed: 42
 
 data_params:
   train_length: 1260 # 5 year

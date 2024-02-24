@@ -1,23 +1,26 @@
-import copy
 import math
-import os
-import time
 import warnings
 
+import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
 import yaml
+from scipy.stats import spearmanr
 from torch import nn, optim
 
 from models.modelBase import ModelBase
-from scripts.utils import WORK_PATH, DataLoader
+from scripts.utils import WORK_PATH, DataLoader, seed_all
 
 warnings.filterwarnings("ignore")
 
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=1000):
+        '''
+        d_model: dimension of the model
+        max_len: max length of the sequence
+        '''
         super(PositionalEncoding, self).__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -36,6 +39,11 @@ class PositionalEncoding(nn.Module):
 
 class Transformer(ModelBase, pl.LightningModule):
     def __init__(self, name, dl, args):
+        '''
+        name: model name
+        dl: data loader
+        args: yaml file
+        '''
         nn.Module.__init__(self)
         ModelBase.__init__(self, name, args)
         self.d_feat = args["model_params"]["d_feat"]
@@ -45,6 +53,9 @@ class Transformer(ModelBase, pl.LightningModule):
         self.num_layers = args["model_params"]["num_layers"]
         self.max_epochs = args["model_params"]["max_epochs"]
         self.save_path = args["model_params"]["save_path"]
+        self.lr_rate = args["model_params"]["learning_rate"]
+        self.seed = args["model_params"]["seed"]
+        seed_all(self.seed)
 
         self.feature_layer = nn.Linear(self.d_feat, self.d_model)
         self.pos_encoder = PositionalEncoding(self.d_model)
@@ -55,10 +66,13 @@ class Transformer(ModelBase, pl.LightningModule):
             self.encoder_layer, num_layers=self.num_layers
         )
         self.decoder_layer = nn.Linear(self.d_model, 1)
-
+        self.output_norm = nn.BatchNorm1d(1)
         self.l1_reg = None
 
         self.dl = dl
+        
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr_rate)
+        
 
     def forward(self, src):
         # src [F, N, T] -> [N, T, F]
@@ -71,40 +85,6 @@ class Transformer(ModelBase, pl.LightningModule):
         src = self.pos_encoder(src)
         output = self.transformer_encoder(src, mask)  # [T, N, F]
 
-        # [T, N, F] --> [N, T*F]
+        # [T, N, F] --> [N, 1]
         output = self.decoder_layer(output.transpose(1, 0)[:, -1, :])  # [N, 1]
-
         return output.squeeze()
-
-    def get_mseloss(self, batch):
-        _, _, x, y = batch
-        if torch.any(x.isnan()):
-            x = torch.nan_to_num(x, nan=0.0)
-        pred = self.forward(x)
-        loss = nn.functional.mse_loss(pred, y[:, -1].squeeze())
-        return loss
-
-    def training_step(self, batch, batch_idx):
-        loss = self.get_mseloss(batch)
-        # Logging to TensorBoard (if installed) by default
-        self.log("train_loss", loss, prog_bar=True)
-        return loss
-
-    def configure_optimizers(self):
-        self.optimizer = optim.Adam(self.parameters(), lr=1e-3)
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode="min", factor=0.2, patience=20, min_lr=5e-5
-        )
-        return {
-            "optimizer": self.optimizer,
-            "lr_scheduler": self.scheduler,
-            "monitor": "val_loss",
-        }
-
-    def validation_step(self, batch, batch_idx):
-        loss = self.get_mseloss(batch)
-        self.log("val_loss", loss, prog_bar=True)
-
-    def test_step(self, batch, batch_idx):
-        loss = self.get_mseloss(batch)
-        self.log("test_loss", loss)

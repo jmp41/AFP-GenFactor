@@ -41,10 +41,10 @@ class DataLoader:
             self.data[to_clean] = self.data.groupby('Date')[to_clean].apply(cross_section_norm) # convert non-categorical feature to [-3,3]
             self.data[self.category] = self.data.groupby('Date')[self.category].apply(cross_section_norm_category) # convert categorical feature to [0,1]
             self.data[self.target] = self.data.groupby('Date')[self.target].apply(cross_section_norm) # convert label to [-3,3], we only care cross-section ranking
-            self.data.to_csv(WORK_PATH / Path(f'cleaned_data_{self.target}.csv'), index=False)
+            self.data.to_csv(WORK_PATH / Path(f'data/cleaned_data_{self.target}.csv'), index=False)
         else:
-            self.data = pd.read_csv(WORK_PATH / Path(f'cleaned_data_{self.target}.csv'))
-        
+            self.data = pd.read_csv(WORK_PATH / Path(f'data/cleaned_data_{self.target}.csv'))
+            
         self.stock_id = self.data.set_index(['Date','Ticker'])[self.fac_name].unstack(level=1)['alpha001'].columns.values
         self.date = self.data.set_index(['Date','Ticker'])[self.fac_name].unstack(level=1)['alpha001'].index.values
         self.feature = self.data.set_index(['Date','Ticker'])[self.fac_name].unstack(level=1).values.reshape(len(self.date), len(self.stock_id), len(self.fac_name)) # (T, N, F)
@@ -65,7 +65,7 @@ class DataLoader:
         seq_label = torch.from_numpy(self.label[(idx - self.seq_len):idx, :]).float().to(self.device).permute(1,0) # (N, seq_len)
         seq_feature = torch.from_numpy(self.feature[(idx - self.seq_len):idx,:,:]).float().to(self.device).permute(2,1,0) # (F, N, seq_len)
         mask = ~torch.any(seq_label.isnan(), dim = 1)
-        return self.stock_id[mask], self.date[idx], self._norm(seq_feature[:,mask,:]), seq_label[mask,:]
+        return self.stock_id[mask.cpu().numpy()], self.date[idx], self._norm(seq_feature[:,mask,:]), seq_label[mask,:]
     
     def __iter__(self):
         '''
