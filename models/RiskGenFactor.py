@@ -11,10 +11,9 @@ from torch import nn, optim
 from torchmetrics.regression import SpearmanCorrCoef
 
 from models.modelBase import ModelBase
-from scripts.utils import WORK_PATH, DataLoader, seed_all, FEAT_DIM, L1_REG
+from scripts.utils import WORK_PATH, DataLoader, seed_all, FEAT_DIM
 
 warnings.filterwarnings("ignore")
-
 
 class FeatureExtractor(nn.Module):
     def __init__(self, num_latent, hidden_size, num_layers):
@@ -184,15 +183,105 @@ class FactorPredictor(nn.Module):
         pred_sigma = pred_sigma.view(-1)
         return pred_mu, pred_sigma
 
+class GATModel(nn.Module):
+    def __init__(self, d_feat=158, hidden_size=64, num_layers=2, dropout=0.0, base_model="GRU"):
+        super().__init__()
+
+        if base_model == "GRU":
+            self.rnn = nn.GRU(
+                input_size=d_feat,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=dropout,
+            )
+        elif base_model == "LSTM":
+            self.rnn = nn.LSTM(
+                input_size=d_feat,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=dropout,
+            )
+        else:
+            raise ValueError("unknown base model name `%s`" % base_model)
+
+        self.hidden_size = hidden_size
+        self.d_feat = d_feat
+        self.transformation = nn.Linear(self.hidden_size, self.hidden_size)
+        self.a = nn.Parameter(torch.randn(self.hidden_size * 2, 1))
+        self.a.requires_grad = True
+        self.fc = nn.Linear(self.hidden_size, self.hidden_size)
+        self.fc_out = nn.Linear(hidden_size, hidden_size)
+        self.leaky_relu = nn.LeakyReLU()
+        self.softmax = nn.Softmax(dim=1)
+        
+    def cal_attention(self, x, y):
+        x = self.transformation(x)
+        y = self.transformation(y)
+
+        sample_num = x.shape[0]
+        dim = x.shape[1]
+        e_x = x.expand(sample_num, sample_num, dim)
+        e_y = torch.transpose(e_x, 0, 1)
+        attention_in = torch.cat((e_x, e_y), 2).view(-1, dim * 2)
+        self.a_t = torch.t(self.a)
+        attention_out = self.a_t.mm(torch.t(attention_in)).view(sample_num, sample_num)
+        attention_out = self.leaky_relu(attention_out)
+        att_weight = self.softmax(attention_out)
+        return att_weight
+    
+    def forward(self, x):
+        # x: [N, F*T]
+        x = x.reshape(len(x), self.d_feat, -1)  # [N, F, T]
+        x = x.permute(0, 2, 1)  # [N, T, F]
+        out, _ = self.rnn(x)
+        hidden = out[:, -1, :]
+        att_weight = self.cal_attention(hidden, hidden)
+        hidden = att_weight.mm(hidden) + hidden
+        hidden = self.fc(hidden)
+        hidden = self.leaky_relu(hidden)
+        return self.fc_out(hidden).squeeze() # [N, hidden size]
+
+
+class RiskFeatureExtractor(nn.Module):
+    """supervise variance-covariance matrix reconstuction"""
+    def __init__(self, num_latent, hidden_size,num_layers=2,dropout=0.2,base_model = 'GRU'):
+        super(RiskFeatureExtractor, self).__init__()
+        self.num_latent = num_latent
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+
+        self.normalize = nn.LayerNorm(self.num_latent)
+        self.linear = nn.Linear(self.num_latent, self.num_latent)
+        self.leakyrelu = nn.LeakyReLU()
+        self.GAT_model = GATModel(
+            d_feat=self.num_latent,
+            hidden_size=self.hidden_size,
+            num_layers=num_layers ,
+            dropout=dropout,
+            base_model=base_model,
+        )
+
+    def forward(self, x):
+        if x.shape[-1] != self.num_latent:
+            x = x.permute((0,2,1))
+        x = self.normalize(x)
+        out = self.linear(x)
+        out = self.leakyrelu(out)
+        risk_latent = self.GAT_model(out)
+        return risk_latent #* stock_latent[-1]: (batch_size, hidden_size)
+
 class FactorVAE(nn.Module):
-    def __init__(self, feature_extractor, factor_encoder, factor_decoder, factor_predictor):
+    def __init__(self, feature_extractor, factor_encoder, factor_decoder, factor_predictor, risk_extrator):
         super(FactorVAE, self).__init__()
         self.feature_extractor = feature_extractor
         self.factor_encoder = factor_encoder
         self.factor_decoder = factor_decoder
         self.factor_predictor = factor_predictor
         self.short_cut = nn.Linear(FEAT_DIM, 1)
-        self.l1_reg = L1_REG
+        self.risk_extrator = risk_extrator
+        self.map = nn.Linear(128, 64)
 
     @staticmethod
     def KL_Divergence(mu1, sigma1, mu2, sigma2):
@@ -201,28 +290,30 @@ class FactorVAE(nn.Module):
     
     def forward(self, x, returns):
         stock_latent = self.feature_extractor(x)
+        risk_latent = self.risk_extrator(x)
+        stock_latent = torch.cat([stock_latent,risk_latent],dim=1)
+        stock_latent = self.map(stock_latent)
         factor_mu, factor_sigma = self.factor_encoder(stock_latent, returns)
         reconstruction = self.factor_decoder(stock_latent, factor_mu, factor_sigma)
         pred_mu, pred_sigma = self.factor_predictor(stock_latent)
-
+        reconstruction += self.short_cut(x[:,:,-1])
         # Define VAE loss function with reconstruction loss and KL divergence
-        reconstruction += self.short_cut(x.permute(1,0,2)[:,:,-1])
-        reconstruction_loss = F.mse_loss(reconstruction, returns)
+        reconstruction_loss = F.mse_loss(reconstruction.squeeze(), returns)
         
         # Calculate KL divergence between two Gaussian distributions
         if torch.any(pred_sigma == 0):
             pred_sigma[pred_sigma == 0] = 1e-6
         kl_divergence = self.KL_Divergence(factor_mu, factor_sigma, pred_mu, pred_sigma)
+
         vae_loss = reconstruction_loss + kl_divergence
-        l1_norm = sum(p.abs().sum() for p in self.short_cut.parameters())
-        if self.l1_reg is not None:
-            return vae_loss + l1_norm * self.l1_reg
         return vae_loss
+
 
     def prediction(self, x):
         stock_latent = self.feature_extractor(x)
         pred_mu, pred_sigma = self.factor_predictor(stock_latent)
         y_pred = self.factor_decoder(stock_latent, pred_mu, pred_sigma)
+        y_pred += self.short_cut(x[:,:,-1])
         return y_pred.squeeze()
 
     def latent_factor(self, x):
@@ -261,7 +352,6 @@ class GenFactor(ModelBase, pl.LightningModule):
         self.factorVAE = FactorVAE(self.feature_layer,self.factor_encoder, self.factor_decoder, self.factor_predictor)
 
         self.l1_reg = args["model_params"]["l1_reg"]
-        self.short_cut = nn.Linear(self.d_feat, 1)
 
         self.dl = dl
         
@@ -269,6 +359,10 @@ class GenFactor(ModelBase, pl.LightningModule):
 
     def forward(self, src):
         output = self.factorVAE.prediction(src)
-        output += self.short_cut(src.permute(1,0,2)[:,:,-1]).squeeze()
-        return output
+        return output.squeeze()
     
+    def training_step(self, batch, batch_idx):
+        _,_,x, y = batch
+        loss = self.factorVAE(x,y[:,-1])
+        self.log('train_loss', loss)
+        return loss

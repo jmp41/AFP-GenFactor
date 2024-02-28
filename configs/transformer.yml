@@ -9,12 +9,12 @@ model_params:
   max_epochs: 50
   save_path: "results/"
   seed: 42
-  early_stopping: 10
-
+  early_stopping: 5
+  l1_reg: 0.01
 
 data_params:
   train_length: 1260 # 5 year
-  valid_length: 504 # 2 year
+  valid_length: 252 # 2 year
   test_length: 252 # 1 year
   data_path: "data/Data_With_Residual_New.csv"
   target: "1d_return"

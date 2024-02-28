@@ -10,6 +10,9 @@ from torch import nn
 
 WORK_PATH = Path.cwd()
 print(WORK_PATH)
+
+FEAT_DIM = 82
+L1_REG = 0.01
 class DataLoader:
     def __init__(
         self,
@@ -47,9 +50,9 @@ class DataLoader:
             
         self.stock_id = self.data.set_index(['Date','Ticker'])[self.fac_name].unstack(level=1)['alpha001'].columns.values
         self.date = self.data.set_index(['Date','Ticker'])[self.fac_name].unstack(level=1)['alpha001'].index.values
-        self.feature = self.data.set_index(['Date','Ticker'])[self.fac_name].unstack(level=1).values.reshape(len(self.date), len(self.stock_id), len(self.fac_name)) # (T, N, F)
+        self.feature = self.data.set_index(['Date','Ticker'])[self.fac_name].unstack(level=1).values.reshape(len(self.date),len(self.fac_name), len(self.stock_id)) # (T, F, N)
         self.label = self.data.set_index(['Date','Ticker'])[self.target].unstack(level=1).values.reshape(len(self.date), len(self.stock_id)) # (T, N)
-        assert self.feature.shape[1] == self.label.shape[-1], f"feature size {self.feature.shape} does not match lable size {self.label.shape}"
+        assert self.feature.shape[-1] == self.label.shape[-1], f"feature size {self.feature.shape} does not match lable size {self.label.shape}"
         
     def __len__(self):
         start_date, end_date = self.period
@@ -63,7 +66,7 @@ class DataLoader:
         # capture time-series information, seqence data slice -> stock id (N, ), date (1, ), feature (F, N, seq_len), label (N, seq_len)
         assert idx - self.seq_len>=0, "index is smaller than sequence length"
         seq_label = torch.from_numpy(self.label[(idx - self.seq_len):idx, :]).float().to(self.device).permute(1,0) # (N, seq_len)
-        seq_feature = torch.from_numpy(self.feature[(idx - self.seq_len):idx,:,:]).float().to(self.device).permute(2,1,0) # (F, N, seq_len)
+        seq_feature = torch.from_numpy(self.feature[(idx - self.seq_len):idx,:,:]).float().to(self.device).permute(1,2,0) # (F, N, seq_len)
         mask = ~torch.any(seq_label.isnan(), dim = 1)
         return self.stock_id[mask.cpu().numpy()], self.date[idx], self._norm(seq_feature[:,mask,:]), seq_label[mask,:]
     

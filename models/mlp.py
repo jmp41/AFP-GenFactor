@@ -37,15 +37,19 @@ class MLP(ModelBase, pl.LightningModule):
         self.gate = nn.Linear(self.d_feat, 1)
         self.decoder = nn.Sequential(*modules)
         self.output_norm = nn.BatchNorm1d(1)
-        self.l1_reg = 0.01
+        self.l1_reg = args["model_params"]["l1_reg"]
         self.dl = dl
+        self.short_cut = nn.Linear(self.d_feat, 1)
+        
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr_rate)
     
     def forward(self, x):
         # x (F, N, T) -> (N, F, 1)
         x = x.permute(1,0,2)
+        resid = self.short_cut(x[:,:,-1])
         x = self.encoder(x)
         x = self.decoder(x.squeeze())
+        x+=resid
         return x.squeeze() # (N, )
     
     

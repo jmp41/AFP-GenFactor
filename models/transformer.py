@@ -67,8 +67,9 @@ class Transformer(ModelBase, pl.LightningModule):
         )
         self.decoder_layer = nn.Linear(self.d_model, 1)
         self.output_norm = nn.BatchNorm1d(1)
-        self.l1_reg = None
-
+        self.l1_reg = args["model_params"]["l1_reg"]
+        self.short_cut = nn.Linear(self.d_feat, 1)
+        
         self.dl = dl
         
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr_rate)
@@ -77,6 +78,7 @@ class Transformer(ModelBase, pl.LightningModule):
     def forward(self, src):
         # src [F, N, T] -> [N, T, F]
         src = src.permute(1, 2, 0)
+        resid = self.short_cut(src[:, -1, :])
         src = self.feature_layer(src)
         mask = None
 
@@ -87,4 +89,5 @@ class Transformer(ModelBase, pl.LightningModule):
 
         # [T, N, F] --> [N, 1]
         output = self.decoder_layer(output.transpose(1, 0)[:, -1, :])  # [N, 1]
+        output += resid
         return output.squeeze()

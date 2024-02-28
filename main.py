@@ -31,7 +31,7 @@ def inference_and_predict(model):
         try: # ugly but works
             model.reset_weight()
             model.refit()
-            gBar.set_postfix({"Year": int(model.test_period[0][:4])})
+            gBar.set_postfix({"Year": int(model.valid_period[0][:4])})
             model.train_model()
             pred, label, date = model.predict()
             pred_result+=pred
@@ -73,7 +73,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--Model",
         type=str,
-        default="genfactor"
+        default="mlp transformer"
     )
     args_list = parser.parse_args()
     args = {}

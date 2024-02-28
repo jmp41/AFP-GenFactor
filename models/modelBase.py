@@ -42,8 +42,14 @@ class ModelBase(pl.LightningModule):
         if torch.any(x.isnan()):
             x = torch.nan_to_num(x, nan=0.0)
         pred = self.forward(x) 
-        loss = nn.functional.mse_loss(pred, y[:, -1].squeeze())
-        return loss 
+        loss = nn.functional.smooth_l1_loss(pred, y[:, -1].squeeze()) # smooth l1 loss
+        try:
+            l1_norm = sum(p.abs().sum() for p in self.short_cut.parameters())
+        except:
+            l1_norm = sum(p.abs().sum() for p in self.factorVAE.parameters())
+        if self.l1_reg is not None:
+            return loss + l1_norm * self.l1_reg
+        return loss
 
     def get_metrics(self, batch):
         with torch.no_grad():
@@ -52,23 +58,6 @@ class ModelBase(pl.LightningModule):
                 x = torch.nan_to_num(x, nan=0.0)
             pred = self.forward(x) 
             IC,_ = spearmanr(pred.detach().cpu().numpy(), y[:, -1].squeeze().cpu().numpy())
-            # df = pd.DataFrame({
-            #     'signal': pred.detach().cpu().numpy(),  
-            #     'return': y[:, -1].squeeze().cpu().numpy()  
-            # })
-
-            # Sort securities by signal
-            # df_sorted = df.sort_values(by='signal', ascending=False)
-
-            # # Assign quantiles
-            # df_sorted['quantile'] = pd.qcut(df_sorted['signal'], 10, labels=False) + 1
-
-            # # Calculate returns for long and short portfolios
-            # long_returns = df_sorted[df_sorted['quantile'] == 1]['return']  # Top 10%
-            # short_returns = df_sorted[df_sorted['quantile'] == 10]['return']  # Bottom 10%
-
-            # # Assuming equal weighting for simplicity
-            # portfolio_return = long_returns.mean() - short_returns.mean()
             return IC
 
     def training_step(self, batch, batch_idx):
@@ -98,13 +87,13 @@ class ModelBase(pl.LightningModule):
     def train_model(self):
         checkpoint_callback = pl.callbacks.ModelCheckpoint(
             monitor="val_ic",
-            dirpath=self.save_path + "save_model" + f"/{self.name}"+f"/{int(self.test_period[0][:4])}/",
+            dirpath=self.save_path + "save_model" + f"/{self.name}"+f"/{int(self.valid_period[0][:4])}/",
             filename="best_model_" + f"{self.name}",
             save_top_k=1,
             mode="min",
         )
         early_stopping = EarlyStopping('val_ic',patience=self.args['model_params']['early_stopping'],mode='max')
-        tb_logger = TensorBoardLogger(self.save_path+"/logs", name=self.name, version=str(self.test_period[0][:4]))
+        tb_logger = TensorBoardLogger(self.save_path+"/logs", name=self.name, version=str(self.valid_period[0][:4]))
 
         trainer = pl.Trainer(
             max_epochs=self.max_epochs, 
@@ -123,7 +112,7 @@ class ModelBase(pl.LightningModule):
         # predict test period and save to csv files
         self.eval()
         self.cuda()
-        self.dl.update_period(self.test_period)
+        self.dl.update_period(self.valid_period)
         preds = []
         facts = []
         dates = []
@@ -143,7 +132,7 @@ class ModelBase(pl.LightningModule):
             self.save_path
             + "save_model"
             + f"/{self.name}"
-            + f"/{int(self.test_period[0][:4])}/"
+            + f"/{int(self.valid_period[0][:4])}/"
             + "best_model_"
             + f"{self.name}.ckpt"
         )
@@ -157,10 +146,10 @@ class ModelBase(pl.LightningModule):
         # rolling training, window length 12 months
         train_start, train_end = self.seq_len + self.refit_cnt*self.args['data_params']['refit'], self.seq_len + self.args['data_params']['train_length']+self.refit_cnt*self.args['data_params']['refit']
         valid_start, valid_end = train_end+1, train_end+1+self.args['data_params']['valid_length']
-        test_start, test_end = valid_end+1, valid_end+1+self.args['data_params']['test_length']
-        if test_end>len(self.dl.date) - 1:
-            test_end = len(self.dl.date) - 1
+        # test_start, test_end = valid_end+1, valid_end+1+self.args['data_params']['test_length']
+        if valid_end>len(self.dl.date) - 1:
+            valid_end = len(self.dl.date) - 1
         self.train_period = [self.dl.date[train_start], self.dl.date[train_end]]
         self.valid_period = [self.dl.date[valid_start], self.dl.date[valid_end]]
-        self.test_period  = [self.dl.date[test_start], self.dl.date[test_end]]
+        # self.test_period  = [self.dl.date[test_start], self.dl.date[test_end]]
         self.refit_cnt += 1
