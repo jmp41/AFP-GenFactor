@@ -85,6 +85,7 @@ class ModelBase(pl.LightningModule):
         self.log("test_loss", loss)
     
     def train_model(self):
+        self.train()
         checkpoint_callback = pl.callbacks.ModelCheckpoint(
             monitor="val_ic",
             dirpath=self.save_path + "save_model" + f"/{self.name}"+f"/{int(self.valid_period[0][:4])}/",

@@ -46,6 +46,7 @@ class MLP(ModelBase, pl.LightningModule):
     def forward(self, x):
         # x (F, N, T) -> (N, F, 1)
         x = x.permute(1,0,2)
+        print(x.shape)
         resid = self.short_cut(x[:,:,-1])
         x = self.encoder(x)
         x = self.decoder(x.squeeze())

@@ -265,7 +265,7 @@ class RiskFeatureExtractor(nn.Module):
 
     def forward(self, x):
         if x.shape[-1] != self.num_latent:
-            x = x.permute((0,2,1))
+            x = x.permute((1,2,0))
         x = self.normalize(x)
         out = self.linear(x)
         out = self.leakyrelu(out)
@@ -311,9 +311,11 @@ class FactorVAE(nn.Module):
 
     def prediction(self, x):
         stock_latent = self.feature_extractor(x)
+        risk_latent = self.risk_extrator(x)
+        stock_latent = torch.cat([stock_latent,risk_latent],dim=1)
+        stock_latent = self.map(stock_latent)
         pred_mu, pred_sigma = self.factor_predictor(stock_latent)
         y_pred = self.factor_decoder(stock_latent, pred_mu, pred_sigma)
-        y_pred += self.short_cut(x[:,:,-1])
         return y_pred.squeeze()
 
     def latent_factor(self, x):
@@ -348,10 +350,12 @@ class GenFactor(ModelBase, pl.LightningModule):
         self.beta_layer = BetaLayer(self.hidden_size, self.num_factor)
         self.factor_decoder = FactorDecoder(self.alpha_layer, self.beta_layer)
         self.factor_predictor = FactorPredictor(self.hidden_size, self.num_factor)
+        self.risk_extractor = RiskFeatureExtractor(self.d_feat, self.hidden_size, self.num_layers)
         
-        self.factorVAE = FactorVAE(self.feature_layer,self.factor_encoder, self.factor_decoder, self.factor_predictor)
+        self.factorVAE = FactorVAE(self.feature_layer,self.factor_encoder, self.factor_decoder, self.factor_predictor, self.risk_extractor)
 
         self.l1_reg = args["model_params"]["l1_reg"]
+        self.short_cut = nn.Linear(self.d_feat, 1)
 
         self.dl = dl
         
@@ -359,10 +363,6 @@ class GenFactor(ModelBase, pl.LightningModule):
 
     def forward(self, src):
         output = self.factorVAE.prediction(src)
-        return output.squeeze()
+        output += self.short_cut(src.permute(1,0,2)[:,:,-1]).squeeze()
+        return output
     
-    def training_step(self, batch, batch_idx):
-        _,_,x, y = batch
-        loss = self.factorVAE(x,y[:,-1])
-        self.log('train_loss', loss)
-        return loss
